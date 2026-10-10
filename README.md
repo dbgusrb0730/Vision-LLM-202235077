@@ -1,2 +1,2 @@
-# OnDivice-AI
+# Vision-LLM-202235077
 ## 202235077 유현규
