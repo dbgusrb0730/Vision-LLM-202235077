@@ -69,6 +69,42 @@ python 02_Computer_Vision_Project.py --jetson
 
 이 옵션은 GStreamer를 지원하는 Jetson 환경에서 사용합니다.
 
+### USB 카메라용 YUY2 파이프라인
+
+USB 카메라가 YUYV 형식을 지원하면, 코드의 `if args.jetson:` 안에 있는 `pipeline = (...)`을 아래 예시로 교체합니다. V4L2에서 표시하는 `YUYV`는 GStreamer에서 `YUY2`로 지정합니다.
+
+```python
+pipeline = (
+    "v4l2src device=/dev/video0 ! "
+    "video/x-raw,format=YUY2,width=640,height=480,framerate=30/1 ! "
+    "videoconvert ! video/x-raw,format=BGR ! "
+    "queue leaky=downstream max-size-buffers=1 "
+    "max-size-bytes=0 max-size-time=0 ! "
+    "appsink drop=true max-buffers=1 sync=false"
+)
+```
+
+바로 아래의 카메라 생성 코드는 그대로 사용합니다.
+
+```python
+cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+```
+
+장치 경로, 해상도, 프레임 속도는 카메라가 지원하는 조합으로 지정해야 합니다. Jetson 터미널에서 다음 명령으로 확인합니다.
+
+```sh
+v4l2-ctl --list-devices
+v4l2-ctl -d /dev/video0 --list-formats-ext
+```
+
+교체한 파이프라인을 선택하려면 다음 명령으로 실행합니다.
+
+```sh
+python 02_Computer_Vision_Project.py --jetson
+```
+
+현재 코드에서 `--jetson`은 지정된 GStreamer 파이프라인을 사용하는 옵션입니다. 옵션 없이 기본 카메라가 정상 작동한다면 파이프라인 교체 없이 실행해도 됩니다. 이 예시는 OpenCV의 GStreamer 지원이 필요하며, 실제 카메라에서의 동작은 별도로 확인해야 합니다.
+
 ## 내용
 
 | 기술 | 적용 내용 |
