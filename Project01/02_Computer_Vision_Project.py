@@ -7,7 +7,9 @@
 영상: python 02_Computer_Vision_Project.py --source video.mp4
 조작: q/ESC 종료, r 추적 및 경고 횟수 초기화. --mirror로 좌우 반전.
 
-초록색 공을 준비하고 손과 함께 카메라에 비춘다. 파란 원은 검출,
+오른손으로 초록색 공을 들고 왼손을 접근시킨다. 오른손은 경고에서 제외한다.
+손 라벨은 MediaPipe 분류 결과이며 실행 시 실제 좌우와 일치하는지 확인한다.
+파란 원은 검출,
 노란 원은 칼만 추정 위치, 연결선은 손바닥까지의 화면상 거리다.
 SAFE/CAUTION/DANGER는 2차원 영상 기반 시연이며 실제 안전을 보장하지 않는다.
 """
@@ -102,10 +104,11 @@ class BallTracker:
 
 
 def draw_hands(frame, result, connections):
-    """손 관절과 연결선을 표시하고 손바닥 중심/크기를 반환."""
+    """양손을 표시하되 경고 대상인 왼손의 중심/크기만 반환."""
     height, width = frame.shape[:2]
     palms = []
-    for hand in result.hand_landmarks:
+    for hand, handedness in zip(result.hand_landmarks, result.handedness):
+        label = handedness[0].category_name
         points = np.array([(p.x * width, p.y * height) for p in hand])
         pixels = np.rint(points).astype(int)
         for connection in connections:
@@ -116,7 +119,12 @@ def draw_hands(frame, result, connections):
             cv2.circle(frame, tuple(point), 4, color, -1)
         palm = points[[0, 5, 9, 13, 17]].mean(axis=0)
         palm_size = max(float(np.linalg.norm(points[0] - points[9])), 1.0)
-        palms.append((palm, palm_size))
+        target = label == "Left"
+        text = "Left: TARGET" if target else f"{label}: IGNORED"
+        cv2.putText(frame, text, tuple(pixels[0]), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 255) if target else (160, 160, 160), 2)
+        if target:
+            palms.append((palm, palm_size))
     return palms
 
 
@@ -241,7 +249,7 @@ def main():
                         cv2.line(frame, tuple(np.rint(detection[0]).astype(int)),
                                  tuple(np.rint(palm).astype(int)), safety_color, 2)
                     elif not palms:
-                        status += " | NO HAND"
+                        status += " | NO LEFT HAND"
                 cv2.putText(frame, status, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(frame, f"{safety} | Danger entries: {warning.danger_count}",
                             (15, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, safety_color, 2)
