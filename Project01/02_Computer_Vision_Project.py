@@ -1,15 +1,15 @@
-"""Section Project: 초록색 공 추적 및 손과의 관계 시각화.
+"""Section Project: 초록색 공 추적 및 손 접근 경고 시스템.
 
 준비: python -m pip install opencv-python numpy mediapipe
 노트북에서 안내한 hand_landmarker.task를 다음 경로에 저장:
     hand_landmarker.task (이 Python 파일과 같은 폴더)
 실행: python 02_Computer_Vision_Project.py
 영상: python 02_Computer_Vision_Project.py --source video.mp4
-조작: q/ESC 종료, r 추적 초기화. --mirror로 좌우 반전.
+조작: q/ESC 종료, r 추적 및 경고 횟수 초기화. --mirror로 좌우 반전.
 
 초록색 공을 준비하고 손과 함께 카메라에 비춘다. 파란 원은 검출,
-노란 원은 칼만 추정 위치, 자홍색 선은 손바닥까지의 화면상 거리다.
-NEAR는 영상 평면에서 가깝다는 뜻이며 실제 접촉/3D 거리를 뜻하지 않는다.
+노란 원은 칼만 추정 위치, 연결선은 손바닥까지의 화면상 거리다.
+SAFE/CAUTION/DANGER는 2차원 영상 기반 시연이며 실제 안전을 보장하지 않는다.
 """
 
 import argparse
@@ -120,6 +120,40 @@ def draw_hands(frame, result, connections):
     return palms
 
 
+class ProximityWarning:
+    """손 크기로 정규화한 공 표면까지의 거리로 경고. 미검출은 UNKNOWN."""
+
+    def __init__(self):
+        self.danger_count = 0
+        self.danger_latched = False
+
+    def update(self, detection, palms):
+        if detection is None or not palms:
+            # 검출 누락을 안전으로 취급하거나 재진입으로 중복 집계하지 않는다.
+            return "UNKNOWN", (160, 160, 160), None
+        center, radius, _ = detection
+        # 양손 크기가 다를 수 있으므로 정규화 거리 기준으로 위험한 손 선택.
+        palm, size = min(
+            palms, key=lambda p: (np.linalg.norm(p[0] - center) - radius) / p[1]
+        )
+        distance = float(np.linalg.norm(palm - center))
+        gap_ratio = max(0.0, (distance - radius) / size)
+        # 위험 진입 0.7, 해제 1.0으로 경계 부근의 반복 집계를 줄인다.
+        if gap_ratio <= 0.7:
+            if not self.danger_latched:
+                self.danger_count += 1
+            self.danger_latched = True
+        elif gap_ratio >= 1.0:
+            self.danger_latched = False
+        if self.danger_latched:
+            state, color = "DANGER", (0, 0, 255)
+        elif gap_ratio <= 2.0:
+            state, color = "CAUTION", (0, 255, 255)
+        else:
+            state, color = "SAFE", (0, 200, 0)
+        return state, color, (palm, distance, gap_ratio)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -163,6 +197,7 @@ def main():
             raise RuntimeError("카메라/영상을 열 수 없습니다. --source 또는 --jetson을 확인하세요.")
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         tracker = BallTracker()
+        warning = ProximityWarning()
         fps = cap.get(cv2.CAP_PROP_FPS)
         video_dt = 1 / fps if np.isfinite(fps) and fps > 0 else 1 / 30
         is_file = isinstance(source, str) and not args.jetson
@@ -189,6 +224,7 @@ def main():
                     mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb), timestamp
                 )
                 palms = draw_hands(frame, result, vision.HandLandmarksConnections.HAND_CONNECTIONS)
+                safety, safety_color, relation = warning.update(detection, palms)
                 status = "NO BALL"
                 if detection is not None:
                     measured, radius, contour = detection
@@ -199,16 +235,24 @@ def main():
                     if len(tracker.trail) > 1:
                         cv2.polylines(frame, [np.array(tracker.trail, np.int32)], False, (0, 255, 255), 2)
                     status = "TRACKING" if detection is not None else "PREDICTED (occluded)"
-                    if palms and detection is not None:
-                        palm, size = min(palms, key=lambda p: np.linalg.norm(p[0] - detection[0]))
-                        distance = float(np.linalg.norm(palm - detection[0]))
-                        relation = "NEAR" if distance <= tracker.radius + size * 0.7 else "FAR"
-                        status += f" | Hand: {relation} ({distance:.0f}px)"
+                    if relation is not None:
+                        palm, distance, gap_ratio = relation
+                        status += f" | Distance: {distance:.0f}px"
                         cv2.line(frame, tuple(np.rint(detection[0]).astype(int)),
-                                 tuple(np.rint(palm).astype(int)), (255, 0, 255), 2)
+                                 tuple(np.rint(palm).astype(int)), safety_color, 2)
                     elif not palms:
                         status += " | NO HAND"
                 cv2.putText(frame, status, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(frame, f"{safety} | Danger entries: {warning.danger_count}",
+                            (15, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, safety_color, 2)
+                if relation is not None:
+                    cv2.putText(frame, f"Surface gap / palm size: {relation[2]:.2f}",
+                                (15, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.5, safety_color, 1)
+                if safety == "DANGER":
+                    h, w = frame.shape[:2]
+                    cv2.rectangle(frame, (3, 3), (w - 4, h - 4), safety_color, 6)
+                    cv2.putText(frame, "WARNING: HAND TOO CLOSE", (15, 130),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.65, safety_color, 2)
                 cv2.putText(frame, "Blue: detected  Yellow: tracked | q: quit  r: reset",
                             (15, frame.shape[0] - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                 cv2.imshow("Section Project - Ball and Hand", frame)
@@ -218,6 +262,7 @@ def main():
                     break
                 if key == ord("r"):
                     tracker = BallTracker()
+                    warning = ProximityWarning()
     finally:
         cap.release()
         cv2.destroyAllWindows()
