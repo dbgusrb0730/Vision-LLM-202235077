@@ -14,16 +14,15 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "src/outputs/03_DL_and_GPU"
 DATA_ROOT = ROOT / "src/datasets"
 MNIST_EPOCHS = 3
 CIFAR10_EPOCHS = 5
 
-# GPU 실습을 실행하려면 필요한 항목을 True로 변경한다.
-RUN_MNIST_GPU = False
-RUN_CUPY = False
-RUN_CIFAR10 = False
+RUN_MNIST_GPU = True
+RUN_CUPY = True
+RUN_CIFAR10 = True
 
 IMAGE_PATH = ROOT / "src/images/seagull.jpg"
 TARGET_WIDTH = 1280
@@ -143,8 +142,8 @@ def synchronize(device):
 def require_cuda():
     if not torch.cuda.is_available():
         raise RuntimeError(
-            "CUDA GPU를 사용할 수 없습니다. NVIDIA GPU/드라이버와 CUDA 지원 "
-            "PyTorch를 확인하세요. CPU 실습: python 03_DL_and_GPU_todos.py"
+            "CUDA GPU를 사용할 수 없습니다."
+            "PyTorch를 확인하세요."
         )
     return torch.device("cuda")
 
@@ -393,7 +392,7 @@ def get_cupy():
     try:
         import cupy as cp
     except ImportError as exc:
-        raise RuntimeError("CuPy가 없습니다. CUDA 버전에 맞는 CuPy 설치 후 cupy 실습을 실행하세요.") from exc
+        raise RuntimeError("CuPy가 없습니다.") from exc
     if cp.cuda.runtime.getDeviceCount() < 1:
         raise RuntimeError("CuPy에서 사용할 CUDA GPU가 없습니다.")
     return cp
