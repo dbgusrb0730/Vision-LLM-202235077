@@ -1,0 +1,11 @@
+.venv*/
+.piper_venv/
+__pycache__/
+models/
+photos/
+runtime/
+vendor/
+.env
+.env.*
+!.env.example
+config.local.json

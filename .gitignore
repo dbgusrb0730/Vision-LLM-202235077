@@ -1,2 +1,8 @@
 src/**
 .env
+.env.*
+!.env.example
+.venv*/
+.piper_venv/
+__pycache__/
+*.py[cod]

@@ -1,0 +1,3 @@
+# Classroom 00-06 environment is reused; no bulk reinstall required.
+# Only install missing optional UI dependency after --check.
+Pillow>=10

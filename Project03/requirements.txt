@@ -1,0 +1,11 @@
+# Windows / ordinary laptop environment. For Jetson see requirements-jetson.txt.
+numpy>=1.26,<3
+opencv-python>=4.8
+ultralytics>=8.3
+mediapipe>=0.10.14
+Pillow>=10
+sounddevice>=0.5
+huggingface-hub>=0.25
+python-dotenv>=1
+# Install llama-cpp-python separately with the CPU build.
+# Install piper-tts in a separate environment (see README).
