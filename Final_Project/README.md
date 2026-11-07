@@ -1,4 +1,4 @@
-# Project03 — Smart Photo Director
+# Final_Project — Smart Photo Director
 
 **202235077 유현규 · Vision–LLM 융합 시청각 멀티모달 시스템 최종 프로젝트**
 
@@ -27,7 +27,7 @@ YOLO, MediaPipe Pose, 로컬 Gemma, Whisper.cpp, Piper를 사용합니다. **노
 
 - **전신:** 얼굴·어깨·허리를 확인하며, 발목·발끝이 잘려도 허용합니다.
 - **상반신:** 얼굴과 양쪽 어깨 중심의 클로즈업입니다. 허리·다리는 보이지 않아도 됩니다.
-- 사진은 `Project03/photos/`에 JPEG와 촬영 정보 JSON으로 저장합니다. 저장 사진에는 안내 글씨·박스·미리보기 좌우 반전을 적용하지 않습니다.
+- 사진은 `Final_Project/photos/`에 JPEG와 촬영 정보 JSON으로 저장합니다. 저장 사진에는 안내 글씨·박스·미리보기 좌우 반전을 적용하지 않습니다.
 - 안내 재생, Gemma 처리, 카운트다운 중에는 음성을 듣지 않습니다. 즉시 취소는 키보드 `C`를 사용합니다.
 - 음성 명령은 정해진 표현을 사용합니다. 불명확한 인식 결과로 모드나 촬영을 추측하지 않습니다. 터미널의 자유로운 문장은 Gemma가 해석합니다.
 
@@ -61,7 +61,7 @@ YOLO, MediaPipe Pose, 로컬 Gemma, Whisper.cpp, Piper를 사용합니다. **노
 | [CODE_GUIDE.md](CODE_GUIDE.md) | 코드 설명 순서와 구현 원리 |
 | [VALIDATION.md](VALIDATION.md) | 검증 결과와 미검증 항목 |
 
-설정 안의 상대 경로는 실행한 터미널 위치가 아닌 **Project03 폴더 기준**입니다.
+설정 안의 상대 경로는 실행한 터미널 위치가 아닌 **Final_Project 폴더 기준**입니다.
 
 ## Jetson Orin Nano 실행
 
@@ -69,8 +69,8 @@ YOLO, MediaPipe Pose, 로컬 Gemma, Whisper.cpp, Piper를 사용합니다. **노
 
 ```bash
 cd ~/vision-llm/vision-llm-202235077
-python Project03/main.py --config config.jetson.json --check
-python Project03/main.py --config config.jetson.json
+python Final_Project/main.py --config config.jetson.json --check
+python Final_Project/main.py --config config.jetson.json
 ```
 
 기존 강의 환경에는 새 가상환경 생성이나 모델 재설치가 필요하지 않습니다. `--check`에서 누락된 항목이 나올 때만 실제 경로와 패키지를 확인합니다. Pillow가 없으면 활성화된 환경에 `python -m pip install Pillow`로 추가합니다. 한글 폰트가 없으면 `font_path`를 설치된 한글 폰트로 지정하거나 `sudo apt install fonts-nanum`으로 준비합니다.
@@ -84,7 +84,7 @@ Jetson에는 Windows용 `requirements.txt`를 통째로 설치하지 않습니�
 Jetson 음성 입력은 `pasuspender -- arecord`로 5초씩 녹음하고 Whisper CPU 실행 파일로 인식합니다. Piper는 별도 `.piper_venv`에서 실행하고 `aplay`로 재생합니다.
 
 ```bash
-python Project03/main.py --config config.jetson.json --audio-devices
+python Final_Project/main.py --config config.jetson.json --audio-devices
 ```
 
 마이크 기본 설정은 `plughw:3,0`입니다. 예를 들어 card 2, device 0이면 `input_device`를 `plughw:2,0`으로 바꿉니다. `output_device: null`은 기본 스피커입니다.
@@ -93,10 +93,10 @@ python Project03/main.py --config config.jetson.json --audio-devices
 
 ### 현재 준비된 환경
 
-PowerShell에서 Project03으로 이동한 뒤 실행합니다.
+PowerShell에서 Final_Project으로 이동한 뒤 실행합니다.
 
 ```powershell
-cd C:\Users\dbgus\Documents\GitHub\Vision-LLM-202235077\Project03
+cd C:\Users\dbgus\Documents\GitHub\Vision-LLM-202235077\Final_Project
 .\.venv311\Scripts\python.exe main.py --check
 .\.venv311\Scripts\python.exe main.py
 ```
@@ -154,7 +154,7 @@ Gemma 연결 검사:
 
 ## 검증
 
-Project03 폴더에서:
+Final_Project 폴더에서:
 
 ```bash
 python -m unittest discover -s . -p test_director.py -v
