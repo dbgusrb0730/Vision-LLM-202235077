@@ -9,6 +9,86 @@ from commands import direct_intent
 from assistant_worker import AssistantWorker
 from audio_io import AudioIO
 from settings import load_config
+from threading import Event
+from vision import LiveVision, Vision
+
+
+class LiveVisionTests(unittest.TestCase):
+    def test_pose_updates_between_yolo_detections(self):
+        import numpy as np
+        model = Vision.__new__(Vision)
+        model.config = {'analysis_width': 320}
+        model.cv2 = Mock()
+        model.cv2.resize.side_effect = lambda frame, size: frame
+        model.mp, model.yolo, model.pose = Mock(), Mock(), Mock()
+        # Use a real list subclass for len(), with YOLO's xyxy attribute.
+        class Boxes(list):
+            pass
+        boxes = Boxes([1])
+        boxes.xyxy = [Mock()]
+        boxes.xyxy[0].cpu.return_value.tolist.return_value = [1, 1, 9, 9]
+        model.yolo.predict.return_value = [Mock(boxes=boxes)]
+        model.pose.detect_for_video.return_value = Mock(pose_landmarks=[person().landmarks])
+        model.timestamp, model.detect_after = 0, 0
+        model.people, model.box = 0, None
+        frame = np.zeros((10, 10, 3), dtype=np.uint8)
+        with patch('vision.time.monotonic', return_value=10):
+            first = model.observe(frame, 10)
+        with patch('vision.time.monotonic', return_value=10.1):
+            tracked = model.observe(frame, 10.1)
+        self.assertTrue(first.detection_fresh)
+        self.assertFalse(tracked.detection_fresh)
+        self.assertEqual(model.yolo.predict.call_count, 1)
+        self.assertEqual(model.pose.detect_for_video.call_count, 2)
+        with patch('vision.time.monotonic', return_value=10.4):
+            self.assertTrue(model.observe(frame, 10.4).detection_fresh)
+        self.assertEqual(model.yolo.predict.call_count, 2)
+
+    def test_busy_frames_are_skipped_and_result_keeps_its_original_frame(self):
+        import numpy as np
+        started, release = Event(), Event()
+        model = Mock()
+        model.timings = (.1, .2)
+        def observe(frame, timestamp):
+            started.set()
+            if not release.wait(2):
+                raise TimeoutError('test worker did not unblock')
+            return Observation(1)
+        model.observe.side_effect = observe
+        with patch('vision.Vision', return_value=model):
+            worker = LiveVision({})
+            frame = np.zeros((2, 2, 3), dtype=np.uint8)
+            try:
+                self.assertIsNone(worker.step(frame, 10))
+                self.assertTrue(started.wait(2))
+                frame[:] = 1
+                self.assertIsNone(worker.step(frame, 11))
+                self.assertEqual(model.observe.call_count, 1)
+                release.set()
+                worker.pending.result(timeout=2)
+                result = worker.step(frame, 12)
+                self.assertEqual(result[1], 10)
+                self.assertEqual(int(result[0].sum()), 0)
+                worker.pending.result(timeout=2)
+                self.assertEqual([call.args[1] for call in model.observe.call_args_list], [10, 12])
+            finally:
+                release.set()
+                worker.close()
+            model.close.assert_called_once()
+
+    def test_inference_failure_reaches_main_loop(self):
+        import numpy as np
+        with patch('vision.Vision', side_effect=RuntimeError('model failed')):
+            worker = LiveVision({})
+            try:
+                frame = np.zeros((2, 2, 3), dtype=np.uint8)
+                worker.step(frame, 1)
+                with self.assertRaisesRegex(RuntimeError, 'model failed'):
+                    worker.pending.result(timeout=2)
+                with self.assertRaisesRegex(RuntimeError, 'model failed'):
+                    worker.step(frame, 2)
+            finally:
+                worker.close()
 
 
 def person(center=.5, upper=False):
@@ -96,6 +176,19 @@ class FramingTests(unittest.TestCase):
 
 
 class CaptureTests(unittest.TestCase):
+    def test_cached_detection_cannot_save_and_fresh_detection_must_pass(self):
+        gate = CaptureGate(.5, 1)
+        obs = person()
+        gate.request(0)
+        for t in (0, .5, 1):
+            gate.update(t, assess(obs, 'full'), signature(obs, 'full'))
+        self.assertEqual(gate.update(1.5, assess(obs, 'full'), signature(obs, 'full'),
+                                     allow_capture=False), ('countdown', 1))
+        self.assertEqual(gate.update(1.6, assess(Observation(2), 'full'), None)[0], 'interrupted')
+        for t in (2, 2.5, 3):
+            gate.update(t, assess(obs, 'full'), signature(obs, 'full'))
+        self.assertEqual(gate.update(3.5, assess(obs, 'full'), signature(obs, 'full'))[0], 'capture')
+
     def setUp(self):
         self.gate = CaptureGate(1, 3)
         self.advice = assess(person(), 'full')
