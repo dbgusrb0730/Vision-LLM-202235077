@@ -9,3 +9,6 @@ vendor/
 .env.*
 !.env.example
 config.local.json
+
+# Temporary patch distribution copies
+jetson_frame_fix*/

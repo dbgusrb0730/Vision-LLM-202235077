@@ -40,7 +40,9 @@ YOLO, MediaPipe Pose, 로컬 Gemma, Whisper.cpp, Piper를 사용합니다. **노
 마이크 → Whisper 한국어 인식 → 명령 처리 / Gemma 구도 설명 → Piper → 스피커
 ```
 
-카메라 처리는 메인 스레드, 음성과 Gemma 처리는 별도 스레드에서 실행합니다. 짧은 명령과 자동 이동 안내는 코드가 처리하고, Gemma는 관측 정보를 바탕으로 구도 설명과 터미널 문장 해석을 담당합니다.
+카메라 읽기·화면 표시·사진 저장은 메인 스레드, YOLO·MediaPipe 분석은 별도 작업 스레드, 음성·Gemma 처리는 별도 음성 스레드에서 실행합니다. 터미널 입력도 별도 스레드에서 받습니다. 분석은 한 번에 하나만 실행하고 작업 중 들어온 프레임을 대기열에 쌓지 않습니다.
+
+**Gemma는 사진을 직접 분석하지 않습니다.** 구도 판정과 기본 이동 방향은 `framing.py`가 결정합니다. 사용자가 “구도”라고 질문하면 현재 모드와 판정 문장을 Gemma에 전달해 설명을 생성하고 Piper로 읽습니다. 정해진 음성 명령은 규칙 기반으로 처리하며, 규칙 밖의 자유 문장은 **터미널에 입력했을 때만** Gemma가 해석합니다.
 
 ## 파일 구성
 
@@ -56,14 +58,15 @@ YOLO, MediaPipe Pose, 로컬 Gemma, Whisper.cpp, Piper를 사용합니다. **노
 | `settings.py` | 설정 읽기와 경로 처리 |
 | `config.jetson.json` / `config.laptop.json` | 장치별 모델·카메라·음성 설정 |
 | `prepare_models.py` | 모델 준비 |
-| `check_gemma.py` / `test_director.py` | Gemma 연결 검사 / 자동 검사 |
+| `check_gemma.py` | 실제 Gemma 모델 로드와 의도 분류 검사 |
+| `presentation/` | 발표 PPT·PDF 및 시연 영상 |
 | `requirements*.txt` | 환경별 의존성 안내 |
 
 설정 안의 상대 경로는 실행한 터미널 위치가 아닌 **Final_Project 폴더 기준**입니다.
 
 ## Jetson Orin Nano 실행
 
-**Python 가상환경을 활성화한 터미널**에서 실행합니다.
+강의에서 사용한 Python 가상환경을 활성화합니다. 아래 명령은 저장소 폴더명이 `vision-llm-202235077`인 경우입니다. Linux에서는 대소문자를 구분하므로 실제 폴더명이 `Vision-LLM-202235077`이면 그 이름을 사용하세요.
 
 ```bash
 cd ~/vision-llm/vision-llm-202235077
@@ -71,7 +74,7 @@ python Final_Project/main.py --config config.jetson.json --check
 python Final_Project/main.py --config config.jetson.json
 ```
 
-기존 강의 환경에는 새 가상환경 생성이나 모델 재설치가 필요하지 않습니다. `--check`에서 누락된 항목이 나올 때만 실제 경로와 패키지를 확인합니다. Pillow가 없으면 활성화된 환경에 `python -m pip install Pillow`로 추가합니다. 한글 폰트가 없으면 `font_path`를 설치된 한글 폰트로 지정하거나 `sudo apt install fonts-nanum`으로 준비합니다.
+00~06 실습에서 준비한 환경과 모델을 재사용합니다. `--check`에서 누락된 항목이 나올 때만 실제 경로와 패키지를 확인합니다. Pillow가 없으면 활성화된 환경에 `python -m pip install Pillow`로 추가합니다. 기본 한글 폰트 경로는 `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`입니다. 경로가 없으면 `fc-list :lang=ko file family`로 설치된 한글 글꼴을 찾아 `font_path`를 변경합니다.
 
 Jetson에는 Windows용 `requirements.txt`를 통째로 설치하지 않습니다.
 
@@ -85,13 +88,36 @@ Jetson 음성 입력은 `pasuspender -- arecord`로 5초씩 녹음하고 Whisper
 python Final_Project/main.py --config config.jetson.json --audio-devices
 ```
 
-마이크 기본 설정은 `plughw:3,0`입니다. 예를 들어 card 2, device 0이면 `input_device`를 `plughw:2,0`으로 바꿉니다. `output_device: null`은 기본 스피커입니다.
+카메라 기본 경로는 `/dev/video0`, 마이크 기본값은 `plughw:3,0`, `output_device: null`은 기본 스피커입니다. 이 값들은 모든 Jetson에서 동일하지 않습니다.
+
+```bash
+v4l2-ctl --list-devices
+arecord -l
+aplay -l
+```
+
+카메라는 `v4l2-ctl -d /dev/video번호 --list-formats-ext`에서 YUYV 640×480, 30 FPS 캡처 지원을 확인하고 `camera` 파이프라인의 장치 경로만 수정합니다. 마이크·스피커는 각각 실제 card/device 번호에 맞게 `input_device`, `output_device`를 지정합니다. 예를 들어 실제 마이크가 card 3, device 0이면 `plughw:3,0`입니다. 장치 번호는 재연결 후 바뀔 수 있습니다.
+
+상대 경로는 다음 강의 폴더 구조를 기준으로 합니다.
+
+```text
+~/vision-llm/
+├─ .venv/                       # 강의용 Python 환경
+├─ .piper_venv/                 # Piper 전용 환경
+├─ whisper.cpp/
+│  ├─ build-cpu/bin/whisper-cli
+│  └─ models/ggml-base.bin
+├─ src/models/Piper/
+└─ vision-llm-202235077/
+   ├─ src/models/               # YOLO, MediaPipe, Gemma4
+   └─ Final_Project/
+```
 
 ## Windows 노트북 실행
 
 ### 현재 준비된 환경
 
-PowerShell에서 Final_Project으로 이동한 뒤 실행합니다.
+PowerShell에서 `Final_Project` 폴더로 이동한 뒤 실행합니다. 아래 경로는 개발 노트북 예시이므로 본인의 저장소 위치에 맞춥니다.
 
 ```powershell
 cd C:\Users\dbgus\Documents\GitHub\Vision-LLM-202235077\Final_Project
@@ -148,9 +174,30 @@ Gemma 연결 검사:
 - 움직임은 시작 위치와 현재 관절 좌표를 비교합니다. 상반신에서 화면 밖 허리·다리의 추정값은 안정 판정에 사용하지 않습니다.
 - 구도 기준은 초기 시연용 경험적 값입니다. 실제 거리·보폭이나 미적 완성도를 측정하지 않습니다.
 - 관측 간격 또는 분석 시간이 1초를 넘으면 오래된 영상으로 촬영하지 않도록 보류합니다.
-- 실제 음성 인식은 마이크·거리·소음에 영향을 받습니다. 노트북에서는 오인식이 관찰됐으며, Jetson의 전체 음성 시연은 실기기 확인이 필요합니다.
+- 실제 음성 인식은 마이크·거리·소음에 영향을 받습니다. 노트북에서는 오인식이 관찰됐으며, Jetson에서는 음성 녹음·재생 시간 초과도 보고되어 안정성 검증이 더 필요합니다.
 
 
+
+## Jetson 프레임 문제와 개선
+
+강의실 CPU 실행에서 초기 속도는 약 **1.8 FPS**, YOLO 처리 시간은 **약 500ms대**, MediaPipe Pose는 **약 50~100ms**로 확인했습니다. 영상 분석을 순차 실행하는 동안 화면 갱신도 기다리던 것이 끊김의 원인이었습니다. 분석 크기를 줄이는 것만으로는 체감 개선이 확인되지 않았습니다.
+
+현재 구현에는 다음 개선이 들어 있습니다.
+
+- 미리보기와 영상 분석 분리: 작업이 끝나면 최신 프레임을 분석하고 대기 프레임은 쌓지 않습니다.
+- YOLO 실행 후 0.35초 동안 사람 수·박스를 재사용하며 관절을 추적합니다.
+- 한글 안내 패널을 최대 32개 캐시하고 FPS 표시를 1초 간격으로 갱신합니다.
+- GStreamer의 해상도는 파이프라인에서 지정하고 카메라를 연 뒤 다시 설정하지 않습니다.
+- Jetson에서는 창 상태 조회에 의존하지 않고 `Q` 또는 `Esc`로 종료합니다.
+
+
+## 제출 자료
+
+- [발표 자료 PDF](presentation/Smart_Photo_Director.pdf)
+- [편집 가능한 PPT](presentation/Smart_Photo_Director.pptx)
+- [시연 영상](presentation/ㅇㅇㅇ.mp4)
+
+모델, 가상환경, 토큰 파일, 촬영 결과, 임시 파일, 외부 실행 도구는 `.gitignore`로 제외합니다. 모델은 위 준비 절차 또는 기존 강의 환경에서 별도로 준비합니다.
 
 ## 참고 자료
 

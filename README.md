@@ -20,3 +20,9 @@
 | `Project01/` | 컴퓨터 비전 프로젝트 |
 | `Final_Project/` | 최종 프로젝트: Smart Photo Director |
 | `src/` | 실습용 모델 및 리소스 경로 |
+
+## 최종 프로젝트 — Smart Photo Director
+
+음성으로 전신·상반신 모드를 선택하고, 구도가 안정되면 한 장을 자동 촬영하는 핸즈프리 포토 디렉터입니다. YOLO·MediaPipe·로컬 Gemma·Whisper·Piper를 사용하며 Windows와 Jetson Orin Nano의 CPU 실행 구성을 제공합니다.
+
+[발표 PDF](Final_Project/presentation/Smart_Photo_Director.pdf)
