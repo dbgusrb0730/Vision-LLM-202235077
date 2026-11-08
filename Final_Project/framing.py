@@ -20,6 +20,7 @@ class Observation:
     people: int
     box: tuple | None = None
     landmarks: tuple = ()
+    detection_fresh: bool = True
 
 
 @dataclass(frozen=True)
@@ -119,7 +120,7 @@ class CaptureGate:
         elif action == 'cancel':
             self.cancel()
 
-    def update(self, now, advice, pose_signature):
+    def update(self, now, advice, pose_signature, allow_capture=True):
         if self.armed_until is not None and now >= self.armed_until:
             self.cancel()
             return 'expired', None
@@ -145,6 +146,8 @@ class CaptureGate:
             self.countdown_at = now
         remaining = self.countdown_seconds - (now - self.countdown_at)
         if remaining <= 0:
+            if not allow_capture:
+                return 'countdown', 1  # Wait for a frame with a fresh person count/box.
             self.cancel()
             return 'capture', 0
         return 'countdown', math.ceil(remaining)

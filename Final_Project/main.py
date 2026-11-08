@@ -1,6 +1,7 @@
 """Smart Photo Director: YOLO + pose + local Gemma + offline speech."""
 import argparse
 from datetime import datetime
+from functools import lru_cache
 import importlib.util
 import json
 from pathlib import Path
@@ -11,7 +12,7 @@ import subprocess
 from threading import Thread
 import time
 
-from framing import Advice, assess, signature, CaptureGate
+from framing import Advice, Observation, assess, signature, CaptureGate
 from settings import load_config
 
 
@@ -62,11 +63,12 @@ class Overlay:
         from PIL import ImageFont
         self.font = ImageFont.truetype(config['font_path'], 21)
 
-    def draw(self, frame, lines):
+    @lru_cache(maxsize=32)
+    def panel(self, width, lines):
         import cv2
         import numpy as np
         from PIL import Image, ImageDraw
-        image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        image = Image.new('RGB', (width, 900), (15, 20, 30))
         draw = ImageDraw.Draw(image)
         y = 12
         for text in lines:
@@ -81,7 +83,13 @@ class Overlay:
             draw.rectangle((8, y - 2, image.width - 8, y + 27), fill=(15, 20, 30))
             draw.text((14, y), line, font=self.font, fill='white')
             y += 30
-        return cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+        return cv2.cvtColor(np.asarray(image.crop((0, 0, width, y))), cv2.COLOR_RGB2BGR)
+
+    def draw(self, frame, lines):
+        panel = self.panel(frame.shape[1], tuple(lines))
+        height = min(frame.shape[0], panel.shape[0])
+        frame[:height] = panel[:height]
+        return frame
 
 
 def save_photo(frame, config, mode, obs):
@@ -104,18 +112,19 @@ def save_photo(frame, config, mode, obs):
 
 def run(config, args):
     import cv2
-    from vision import Vision
+    from vision import LiveVision
     vision = worker = cap = None
     try:
-        vision = Vision(config)
+        vision = LiveVision(config)
         backend = {'auto': cv2.CAP_ANY, 'gstreamer': cv2.CAP_GSTREAMER,
                    'dshow': cv2.CAP_DSHOW, 'v4l2': cv2.CAP_V4L2}[config['camera_backend']]
         cap = cv2.VideoCapture(config['camera'], backend)
         if not cap.isOpened():
             raise RuntimeError('카메라를 열 수 없습니다. camera 번호와 backend를 확인하세요.')
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config['camera_width'])
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config['camera_height'])
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        if config['camera_backend'] != 'gstreamer':
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, config['camera_width'])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config['camera_height'])
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         overlay = Overlay(config)
         if not args.vision_only:
             from assistant_worker import AssistantWorker
@@ -128,6 +137,11 @@ def run(config, args):
         caption_until, running, loaded = 0.0, True, args.vision_only
         last_code, status_since, previous_time = None, time.monotonic(), time.monotonic()
         fps, actions = 0.0, []
+        obs, observation_at = Observation(0), 0.0
+        observation_after = 0.0
+        state, remaining = 'waiting', None
+        analysis_fps, fps_label, label_at = 0.0, '', 0.0
+        timing_log_at = 0.0
         print('카메라 창: 1 전신 / 2 상반신 / Space 촬영 / C 취소 / Q 종료')
         print('Gemma 로딩 후 터미널에 한국어 명령을 입력하고 Enter를 눌러도 됩니다.')
         while running:
@@ -135,8 +149,16 @@ def run(config, args):
             if not ok:
                 raise RuntimeError('카메라 프레임을 읽지 못했습니다. 촬영을 중지합니다.')
             start = time.monotonic()
-            obs = vision.observe(frame, start)
-            now = time.monotonic()  # Decision time after inference, not camera-read time.
+            result = vision.step(frame, start)
+            now = time.monotonic()
+            if result is not None:
+                analyzed_frame, observation_at, obs, timings = result
+                analysis_fps = 1 / max(now - observation_at, .001)
+                if now - timing_log_at >= 5:
+                    yolo_label = f'{timings[0]*1000:.0f} ms' if obs.detection_fresh else '이전 탐지 재사용'
+                    print(f'영상 분석: YOLO {yolo_label} / '
+                          f'Pose {timings[1]*1000:.0f} ms', flush=True)
+                    timing_log_at = now
             if worker:
                 while True:
                     try:
@@ -156,6 +178,8 @@ def run(config, args):
             for action in actions:
                 if loaded or action == 'cancel':
                     gate.command(action, now)
+                    observation_after = now
+                    state, remaining = 'waiting', None
                 if action in ('full', 'upper'):
                     mode = action
                     revision += 1
@@ -172,14 +196,22 @@ def run(config, args):
             if advice.code != last_code:
                 last_code, status_since = advice.code, now
             # Do not capture a frame that took too long to analyze.
-            if now - start > 1:
+            if now - observation_at > 1:
                 advice = Advice('slow_frame', '영상 처리 지연이 커요. 입력 크기와 CPU 부하를 확인해 주세요.')
+            if observation_at < observation_after:
+                advice = Advice('waiting_frame', '새 구도를 확인하고 있어요. 잠시 멈춰 주세요.')
             gate_advice = advice
             if worker and worker.busy.is_set():
                 gate_advice = Advice('assistant_busy', '음성 안내가 끝나면 촬영 준비를 시작해요.')
-            state, remaining = gate.update(now, gate_advice, signature(obs, mode))
+            # Never advance a countdown using the same observation repeatedly.
+            # Save the exact analyzed frame, not an unverified newer preview.
+            if result is not None or not gate_advice.ready:
+                state, remaining = gate.update(now, gate_advice, signature(obs, mode),
+                                               allow_capture=obs.detection_fresh)
+            elif state in ('capture', 'interrupted', 'expired'):
+                state, remaining = 'waiting', None
             if state == 'capture':
-                path = save_photo(frame, config, mode, obs)
+                path = save_photo(analyzed_frame, config, mode, obs)
                 caption, caption_until = f'저장 완료: {path.name}', now + 8
                 print('사진 저장:', path)
                 if worker:
@@ -209,7 +241,10 @@ def run(config, args):
                     cv2.circle(preview, (int(x*w), int(point.y*h)), 3, color, -1)
             fps = .9 * fps + .1 / max(now - previous_time, .001)
             previous_time = now
-            lines = [f'포토 디렉터 | {"전신" if mode == "full" else "상반신"} | {fps:.1f} FPS',
+            if now - label_at >= 1:
+                fps_label = f'화면 {fps:.1f} / 분석 {analysis_fps:.1f} FPS'
+                label_at = now
+            lines = [f'포토 디렉터 | {"전신" if mode == "full" else "상반신"} | {fps_label}',
                      advice.text,
                      (f'이동 준비 시간 {remaining}초' if state == 'preparing' else
                       f'촬영까지 {remaining}' if remaining else
@@ -222,7 +257,8 @@ def run(config, args):
                       ord('c'): 'cancel', ord('q'): 'quit', 27: 'quit'}.get(key)
             if action:
                 actions.append(action)
-            if cv2.getWindowProperty('Smart Photo Director', cv2.WND_PROP_VISIBLE) < 1:
+            # Jetson GTK may not report this property reliably; Q/Esc exits there.
+            if sys.platform == 'win32' and cv2.getWindowProperty('Smart Photo Director', cv2.WND_PROP_VISIBLE) < 1:
                 running = False
     finally:
         if worker:
