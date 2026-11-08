@@ -58,8 +58,6 @@ YOLO, MediaPipe Pose, 로컬 Gemma, Whisper.cpp, Piper를 사용합니다. **노
 | `prepare_models.py` | 모델 준비 |
 | `check_gemma.py` / `test_director.py` | Gemma 연결 검사 / 자동 검사 |
 | `requirements*.txt` | 환경별 의존성 안내 |
-| [CODE_GUIDE.md](CODE_GUIDE.md) | 코드 설명 순서와 구현 원리 |
-| [VALIDATION.md](VALIDATION.md) | 검증 결과와 미검증 항목 |
 
 설정 안의 상대 경로는 실행한 터미널 위치가 아닌 **Final_Project 폴더 기준**입니다.
 
@@ -152,15 +150,6 @@ Gemma 연결 검사:
 - 관측 간격 또는 분석 시간이 1초를 넘으면 오래된 영상으로 촬영하지 않도록 보류합니다.
 - 실제 음성 인식은 마이크·거리·소음에 영향을 받습니다. 노트북에서는 오인식이 관찰됐으며, Jetson의 전체 음성 시연은 실기기 확인이 필요합니다.
 
-## 검증
-
-Final_Project 폴더에서:
-
-```bash
-python -m unittest discover -s . -p test_director.py -v
-```
-
-자동 검사 **35개 통과**. 명령 처리, 오인식 동작 차단, 전신/클로즈업 판정, 자동 촬영, 취소·만료, 움직임·미검출 대응 등을 검사했습니다. 노트북에서 실제 YOLO·MediaPipe 모델 로드, 이미지 추론, 한글 렌더링, 사진 저장을 확인했습니다. 상세 검증 범위는 [VALIDATION.md](VALIDATION.md)에 기록했습니다.
 
 
 ## 참고 자료
